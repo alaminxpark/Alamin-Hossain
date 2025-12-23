@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Hemodynamics & Cardiac Risk Explorer",
+  "description": "An advanced medical simulation dashboard for pulsatile blood flow, metabolic gas exchange, and AI-driven clinical risk assessment using computational fluid dynamics.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
