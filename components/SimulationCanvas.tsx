@@ -6,6 +6,7 @@ interface Props {
   uField: React.MutableRefObject<Float32Array[]>;
   rbcs: React.MutableRefObject<{ z: number; r: number }[]>;
   isRunning: boolean;
+  stenosisSeverity: number;
 }
 
 const getJetColor = (v: number, max: number) => {
@@ -16,7 +17,7 @@ const getJetColor = (v: number, max: number) => {
   return `rgb(${Math.round(r)},${Math.round(g)},${Math.round(b)})`;
 };
 
-const SimulationCanvas: React.FC<Props> = ({ uField, rbcs, isRunning }) => {
+const SimulationCanvas: React.FC<Props> = ({ uField, rbcs, isRunning, stenosisSeverity }) => {
   const fieldRef = useRef<HTMLCanvasElement>(null);
   const vectorRef = useRef<HTMLCanvasElement>(null);
   const rbcRef = useRef<HTMLCanvasElement>(null);
@@ -38,12 +39,32 @@ const SimulationCanvas: React.FC<Props> = ({ uField, rbcs, isRunning }) => {
 
       const currentU = uField.current;
 
+      // Calculate narrowing profile based on stenosisSeverity
+      // Parabolic dip at center NZ/2
+      const getNarrowing = (j: number) => {
+        const center = NZ / 2;
+        const width = NZ / 4;
+        const dist = Math.abs(j - center);
+        if (dist > width) return 1.0;
+        const severityFactor = (stenosisSeverity / 100) * 0.7;
+        const profile = severityFactor * (1 - Math.pow(dist / width, 2));
+        return 1.0 - profile;
+      };
+
       // 1. Velocity Field
       fctx.clearRect(0, 0, w, h);
-      for (let i = 0; i < NR; i++) {
-        for (let j = 0; j < NZ; j++) {
+      fctx.fillStyle = '#0f172a'; // Slate 900
+      fctx.fillRect(0, 0, w, h);
+
+      for (let j = 0; j < NZ; j++) {
+        const narrowing = getNarrowing(j);
+        const actualH = narrowing * h;
+        const offset = (h - actualH) / 2;
+        const cellDH = actualH / NR;
+
+        for (let i = 0; i < NR; i++) {
           fctx.fillStyle = getJetColor(currentU[i][j], limit);
-          fctx.fillRect(j * dw, (NR - 1 - i) * dh, dw + 1, dh + 1);
+          fctx.fillRect(j * dw, offset + (NR - 1 - i) * cellDH, dw + 1, cellDH + 1);
         }
       }
 
@@ -51,10 +72,15 @@ const SimulationCanvas: React.FC<Props> = ({ uField, rbcs, isRunning }) => {
       vctx.clearRect(0, 0, w, h);
       vctx.strokeStyle = 'rgba(255,255,255,0.2)';
       vctx.lineWidth = 1;
-      for (let i = 2; i < NR; i += 6) {
-        for (let j = 2; j < NZ; j += 8) {
+      for (let j = 2; j < NZ; j += 8) {
+        const narrowing = getNarrowing(j);
+        const actualH = narrowing * h;
+        const offset = (h - actualH) / 2;
+        const cellDH = actualH / NR;
+
+        for (let i = 2; i < NR; i += 6) {
           const vx = j * dw;
-          const vy = (NR - 1 - i) * dh;
+          const vy = offset + (NR - 1 - i) * cellDH;
           const len = (currentU[i][j] / limit) * 20;
           vctx.beginPath();
           vctx.moveTo(vx, vy);
@@ -68,21 +94,27 @@ const SimulationCanvas: React.FC<Props> = ({ uField, rbcs, isRunning }) => {
       rctx.fillStyle = 'rgba(255, 60, 60, 0.7)';
       
       const currentRbcs = rbcs.current;
-      if (currentRbcs.length < 250) {
+      if (currentRbcs.length < 300) {
         currentRbcs.push({ z: Math.random(), r: Math.random() });
       }
 
       currentRbcs.forEach(p => {
-        const idxR = Math.min(Math.floor(p.r * (NR - 1)), NR - 1);
         const idxZ = Math.min(Math.floor(p.z * (NZ - 1)), NZ - 1);
+        const narrowing = getNarrowing(idxZ);
+        const actualH = narrowing * h;
+        const offset = (h - actualH) / 2;
+        
+        const idxR = Math.min(Math.floor(p.r * (NR - 1)), NR - 1);
         
         if (isRunning) {
-          p.z += currentU[idxR][idxZ] * 0.08;
+          // Bernoulli effect: particles speed up in narrowed region
+          p.z += (currentU[idxR][idxZ] / narrowing) * 0.08;
           if (p.z > 1) p.z = 0;
         }
         
         rctx.beginPath();
-        rctx.arc(p.z * w, h - p.r * h, 1.8, 0, Math.PI * 2);
+        // Scale radial position to stay within narrowed walls
+        rctx.arc(p.z * w, offset + (1 - p.r) * actualH, 1.8, 0, Math.PI * 2);
         rctx.fill();
       });
 
@@ -91,7 +123,7 @@ const SimulationCanvas: React.FC<Props> = ({ uField, rbcs, isRunning }) => {
 
     animationId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animationId);
-  }, [isRunning, uField, rbcs]);
+  }, [isRunning, uField, rbcs, stenosisSeverity]);
 
   return (
     <div className="relative w-full h-[320px] bg-slate-900 rounded-lg overflow-hidden border border-slate-700 shadow-2xl">
@@ -104,6 +136,12 @@ const SimulationCanvas: React.FC<Props> = ({ uField, rbcs, isRunning }) => {
         <div className="w-2.5 flex-grow border border-white/20 bg-gradient-to-t from-blue-900 via-cyan-400 to-red-900 rounded-full" />
         <span className="text-[10px] text-white mono font-bold">0.00</span>
       </div>
+      
+      {stenosisSeverity > 10 && (
+        <div className="absolute top-2 left-1/2 -translate-x-1/2 px-2 py-0.5 bg-red-600/80 text-white text-[8px] font-bold uppercase rounded-sm border border-red-400">
+          Vessel Stenosis Active: {stenosisSeverity}%
+        </div>
+      )}
     </div>
   );
 };

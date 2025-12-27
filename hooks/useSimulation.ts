@@ -41,28 +41,55 @@ export const useSimulation = (params: SimulationParams) => {
   }, []);
 
   const solveStep = useCallback(() => {
-    const { hct, hr, cholesterol, vesselRadius, aqi, cityName } = params;
+    const { hct, hr, cholesterol, vesselRadius, aqi, cityName, stenosisSeverity } = params;
     const cityData = CITY_AQI_DATA.find(c => c.name === cityName);
     
-    const rad = vesselRadius / 1000;
-    const dr = rad / (NR - 1);
+    const baseRad = vesselRadius / 1000;
     const omega = 2 * Math.PI * (hr / 60);
     const p_ampl = 20.0;
-    const dp_dz = 22.0 + p_ampl * Math.sin(omega * timeRef.current);
     
-    const wavelength = WAVE_VELOCITY / (hr / 60);
+    // Global oscillating pressure gradient
+    const globalGrad = 22.0 + p_ampl * Math.sin(omega * timeRef.current);
+
     const currentU = uFieldRef.current;
     const newU = Array.from({ length: NR }, () => new Float32Array(NZ));
     
     let maxV = 0;
     let maxG = 0;
+    let midFlow = 0;
 
     const mu_chol = MU_BASE * (1 + (cholesterol - 180) / 1000);
     const h = hct / 100;
 
-    for (let i = 1; i < NR - 1; i++) {
-      const r = i * dr;
-      for (let j = 0; j < NZ; j++) {
+    // Pre-calculate Narrowing Profile (Axisymmetric Constriction)
+    const getNarrowing = (j: number) => {
+      const center = NZ / 2;
+      const width = NZ / 4;
+      const dist = Math.abs(j - center);
+      if (dist > width) return 1.0;
+      // Geometric constriction: Radius reduction
+      const severityFactor = (stenosisSeverity / 100) * 0.75;
+      return 1.0 - severityFactor * (1 - Math.pow(dist / width, 2));
+    };
+
+    // Main Solver Loop: Navier-Stokes in Pulsatile Cylindrical Coordinates
+    for (let j = 0; j < NZ; j++) {
+      const radScale = getNarrowing(j);
+      const localR = baseRad * radScale;
+      const dr = localR / (NR - 1);
+      
+      /** 
+       * Womersley-Stenosis Interaction:
+       * Local pressure gradient must satisfy mass conservation (Continuity).
+       * In the 1D approximation of axisymmetric NS, Grad_P is scaled by 1/R^4 
+       * to maintain flow rate across the constriction.
+       */
+      const localDpDz = globalGrad / Math.pow(radScale, 4);
+
+      for (let i = 1; i < NR - 1; i++) {
+        const r = i * dr;
+        
+        // Non-Newtonian Viscosity (Quemada Model)
         const du_dr = (currentU[i + 1][j] - currentU[i - 1][j]) / (2 * dr);
         const d2u_dr2 = (currentU[i + 1][j] - 2 * currentU[i][j] + currentU[i - 1][j]) / (dr * dr);
         
@@ -71,17 +98,27 @@ export const useSimulation = (params: SimulationParams) => {
         const kq = (k0 + kInf * Math.sqrt(g_dot / 1.88)) / (1 + Math.sqrt(g_dot / 1.88));
         const mu_effective = mu_chol * Math.pow(1 - 0.5 * kq * h, -2);
 
+        // Navier-Stokes Momentum equation with local coordinates
         const viscous = mu_effective * (d2u_dr2 + (1 / r) * du_dr);
-        newU[i][j] = currentU[i][j] + DT * ((1 / RHO) * dp_dz + (1 / RHO) * viscous);
+        
+        // Update velocity (Transient response captures Womersley profile phase lag)
+        newU[i][j] = currentU[i][j] + DT * ((1 / RHO) * localDpDz + (1 / RHO) * viscous);
         
         if (newU[i][j] > maxV) maxV = newU[i][j];
         if (Math.abs(du_dr) > maxG) maxG = Math.abs(du_dr);
       }
-    }
 
-    for (let j = 0; j < NZ; j++) {
+      // No-slip boundary condition at the (constricted) wall
       newU[NR - 1][j] = 0;
+      // Symmetry condition at the center line
       newU[0][j] = newU[1][j];
+
+      // Calculate Volumetric Flux at the midpoint for global stats
+      if (j === Math.floor(NZ / 2)) {
+        for (let i = 1; i < NR; i++) {
+          midFlow += newU[i][j] * 2 * Math.PI * (i * dr) * dr;
+        }
+      }
     }
 
     uFieldRef.current = newU;
@@ -93,26 +130,28 @@ export const useSimulation = (params: SimulationParams) => {
     const pollutantLoad = (normalizedDust + normalizedChem + (aqi / 400)) / 3;
 
     const aqiImpact = Math.max(0.4, 1 - pollutantLoad);
-    const q_flow = currentU[Math.floor(NR / 2)][0] * Math.PI * rad * rad * 1000 * 60;
-    const o2_cons = q_flow * (hct / 100) * 1.34 * 0.25 * aqiImpact;
+    const basalFlowLmin = midFlow * 1000 * 60;
+    const o2_cons = basalFlowLmin * (hct / 100) * 1.34 * 0.25 * aqiImpact;
     const co2_prod = o2_cons * 0.85;
     
-    const riskIndex = (hct / 45) * (hr / 70) * (cholesterol / 180) * (0.005 / Math.max(maxV, 0.001)) * (1 + pollutantLoad);
+    // Risk Index influenced by geometric shear and metabolic load
+    const riskIndex = (hct / 45) * (hr / 70) * (cholesterol / 180) * (stenosisSeverity > 50 ? 1.6 : 1.0) * (1 + pollutantLoad);
 
     return {
       maxV,
-      dpDz: dp_dz,
+      dpDz: globalGrad,
       maxG,
-      wavelength,
+      wavelength: WAVE_VELOCITY / (hr / 60),
       o2Cons: o2_cons,
       co2Prod: co2_prod,
       time: timeRef.current,
       riskIndex,
-      wallStress: MU_BASE * maxG,
-      peakPressure: 90 + (dp_dz / 2),
+      wallStress: mu_chol * maxG,
+      peakPressure: 90 + (globalGrad / 2),
       heartbeat: getECGValue(timeRef.current, hr),
       aqiImpact,
-      pollutantLoad
+      pollutantLoad,
+      basalFlow: basalFlowLmin
     };
   }, [params]);
 
@@ -121,11 +160,13 @@ export const useSimulation = (params: SimulationParams) => {
     const frame = () => {
       if (isRunning) {
         let lastRes: any = null;
-        for (let i = 0; i < 8; i++) {
+        // Solve multiple steps per frame for stability and visual speed
+        for (let i = 0; i < 6; i++) {
           lastRes = solveStep();
         }
         if (lastRes) {
           setResults(lastRes);
+          // Sample history at reduced frequency
           if (Math.floor(lastRes.time * 1000) % 40 === 0) {
             setHistory(prev => [...prev.slice(-80), {
               time: lastRes!.time,
@@ -134,7 +175,8 @@ export const useSimulation = (params: SimulationParams) => {
               heartbeat: lastRes!.heartbeat,
               pollutantLoad: lastRes!.pollutantLoad,
               lungStress: 1 - lastRes!.aqiImpact,
-              riskIndex: lastRes!.riskIndex
+              riskIndex: lastRes!.riskIndex,
+              basalFlow: lastRes!.basalFlow
             }]);
           }
         }

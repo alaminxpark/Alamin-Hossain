@@ -7,6 +7,35 @@ interface Props {
   data: HistoryPoint[];
 }
 
+export const BasalFlowChart: React.FC<Props> = ({ data }) => {
+  return (
+    <div className="h-48 w-full bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+      <h3 className="text-[9px] font-bold text-slate-500 uppercase mb-2 tracking-widest flex items-center justify-between">
+        Basal Flow Rate (L/min)
+        <span className="text-[8px] text-blue-500">Volumetric Flux</span>
+      </h3>
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data}>
+          <defs>
+            <linearGradient id="colorFlow" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor="#0ea5e9" stopOpacity={0.2}/>
+              <stop offset="95%" stopColor="#0ea5e9" stopOpacity={0}/>
+            </linearGradient>
+          </defs>
+          <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+          <XAxis dataKey="time" hide />
+          <YAxis fontSize={9} stroke="#94a3b8" unit="L" />
+          <Tooltip 
+            contentStyle={{ fontSize: '10px', borderRadius: '8px', border: 'none' }}
+            labelStyle={{ display: 'none' }}
+          />
+          <Area type="monotone" dataKey="basalFlow" stroke="#0ea5e9" fillOpacity={1} fill="url(#colorFlow)" strokeWidth={2} isAnimationActive={false} />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
 export const PollutantImpactChart: React.FC<Props> = ({ data }) => {
   return (
     <div className="h-64 w-full bg-slate-50 rounded-xl p-4 border border-slate-200">

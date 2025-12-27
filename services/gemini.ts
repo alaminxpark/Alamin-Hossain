@@ -17,14 +17,16 @@ export const analyzeMedicalData = async (
   const prompt = `
     Multi-Organ Pathophysiology Report for ${params.cityName}:
     - Environmental Factors: Dust (${cityInfo?.dust} μg/m³), Chemicals (${cityInfo?.chemicals} μg/m³), AQI (${params.aqi}).
+    - Arterial Geometry: Stenosis Severity (${params.stenosisSeverity}%).
+    - Basal Hemodynamics: Volume Flow (${results.basalFlow.toFixed(2)} L/min).
     - Systemic Biological Risk: Hematocrit (${params.hct}%), Cholesterol (${params.cholesterol} mg/dL).
     - Pulmonary Performance: Lung Stress (${((1 - results.aqiImpact) * 100).toFixed(1)}%), Metabolic RQ (${(results.co2Prod/results.o2Cons).toFixed(2)}).
     - Cardiac State: Heart Rate (${params.hr} BPM), Wall Shear Stress (${results.wallStress.toFixed(2)} Pa), Risk Index (${results.riskIndex.toFixed(2)}).
 
-    As a senior specialist in Environmental Cardiology, explain the interaction between these specific urban pollutants and the patient's biological markers. 
-    Analyze how the 'Pollutant Load' is currently impacting the Lung-Heart axis in ${params.cityName}. 
-    Focus on the synergistic risk of disease development (e.g., atherosclerosis or pulmonary hypertension) based on these vectors.
-    Keep the report under 100 words, highly technical, and clinical.
+    As a senior specialist in Environmental Cardiology, explain the interaction between arterial narrowing (stenosis), urban pollutants, and biological risk factors. 
+    Analyze how the reduced basal flow and stenosis geometry are compounding with environmental stress in ${params.cityName}. 
+    Focus on the risk of ischemic events or localized endothelial dysfunction.
+    Keep the report under 110 words, technical, and clinical.
   `;
 
   try {
@@ -32,7 +34,7 @@ export const analyzeMedicalData = async (
       model: 'gemini-3-flash-preview',
       contents: prompt,
       config: {
-        systemInstruction: "You are a world-class cardiologist and environmental toxicologist specializing in the urban Heart-Lung health axis.",
+        systemInstruction: "You are a world-class cardiologist and environmental toxicologist specializing in the urban Heart-Lung health axis and arterial hemodynamics.",
         temperature: 0.7,
       }
     });
